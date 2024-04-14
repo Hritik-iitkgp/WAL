@@ -1,0 +1,82 @@
+# version: '3.8'
+
+# services:
+#   server:
+#     build: 
+#       context: ./server
+#       dockerfile: Dockerfile.sqlite
+#     image: server  # Replace "your_server_image:tag" with your actual server image and tag
+    
+#   metadb:
+#     image: mysql:8.0
+#     container_name: metadb
+#     environment:
+#       MYSQL_ROOT_PASSWORD: giri123456
+#       MYSQL_DATABASE: metadb 
+#     networks:
+#       - net1
+#   lb:
+#     build: ./lb 
+#     image: lb
+#     ports:
+#      - "5000:5000"
+#     volumes:
+#         - /var/run/docker.sock:/var/run/docker.sock
+#         - ./lb:/app
+#     networks:
+#       - net1
+#     privileged: true 
+#     command: python3 -u lb.py
+
+# networks:
+#   net1:
+#     name: net1
+
+
+version: '3.8'
+
+services:
+  server:
+    build: 
+      context: ./server
+      dockerfile: Dockerfile.sqlite
+    image: server  # Replace "your_server_image:tag" with your actual server image and tag
+    
+  metadb:
+    image: mysql:8.0
+    container_name: metadb
+    environment:
+      MYSQL_ROOT_PASSWORD: giri123456
+      MYSQL_DATABASE: metadb 
+    networks:
+      - net1
+
+  lb:
+    build: ./lb 
+    image: lb
+    ports:
+     - "5000:5000"
+    volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - ./lb:/app
+    networks:
+      - net1
+    privileged: true 
+    command: python3 -u lb.py
+
+  shm:
+    build: ./shm
+    image: shm
+    ports:
+     - "5001:5000"
+    volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - ./shm:/app
+    networks:
+      - net1
+    privileged: true 
+    command: python3 -u shm.py
+
+networks:
+  net1:
+    name: net1
