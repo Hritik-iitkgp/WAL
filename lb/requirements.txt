@@ -1,0 +1,4 @@
+Flask
+requests
+aiohttp
+mysql-connector-python
