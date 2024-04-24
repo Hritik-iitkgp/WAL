@@ -1,8 +1,10 @@
 from flask import Flask, jsonify,request
 import os,subprocess,random,requests,time
+from fastapi import FastAPI,Request,HTTPException
 from consistent_hashing import ConsistentHashMap 
 import threading
 import random
+import uvicorn
 import sqlite3,os
 import mysql.connector 
 
@@ -17,12 +19,12 @@ lock1 = threading.Lock()
 
 app = Flask(__name__)
 
-DB_FILE = "metadata.db"
+# DB_FILE = "metadata.db"
 # conn = sqlite3.connect(DB_FILE,timeout=60*60)
 
 # while True:
 #      try:
-#         _conn = mysql.connector.connect(
+#         conn = mysql.connector.connect(
 #             host="metadb",
 #             user="root",
 #             password="giri123456",
@@ -32,10 +34,10 @@ DB_FILE = "metadata.db"
 #         break
 #      except  Exception as e:
 #          time.sleep(2)
-# _conn.close()
+# conn.close()
  
-if os.path.exists(DB_FILE):
-    os.remove(DB_FILE)
+# if os.path.exists(DB_FILE):
+#     os.remove(DB_FILE)
 
 
 @app.route('/init', methods=['POST'])
@@ -50,7 +52,19 @@ def init():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
             cursor = conn.cursor()
             payload = request.get_json()
 
@@ -61,24 +75,25 @@ def init():
             servers = payload['servers']
 
             
-
-            cursor.execute("CREATE TABLE IF NOT EXISTS ShardT ( Stud_id_low INT PRIMARY KEY, Shard_id VARCHAR(100), Shard_size INT, valid_idx INT)")
-            cursor.execute("CREATE TABLE IF NOT EXISTS MapT ( Shard_id VARCHAR(100), Server_id VARCHAR(100))")
+            cursor.execute("DROP TABLE IF EXISTS ShardT")
+            cursor.execute("DROP TABLE IF EXISTS MapT")
+            cursor.execute("CREATE TABLE IF NOT EXISTS ShardT ( Stud_id_low INT PRIMARY KEY, Shard_id VARCHAR(100), Shard_size INT)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS MapT ( Shard_id VARCHAR(100), Server_id VARCHAR(100), Prim INT)")
             
             # Insert shard information into ShardT table
             for shard in shards:
                 shard_id= shard["Shard_id"]
                 hashmaps[shard_id] = ConsistentHashMap(512,0,9)
                 shardLocks[shard_id] = threading.Lock()
-                cursor.execute('''INSERT INTO ShardT (Stud_id_low, Shard_id, Shard_size, valid_idx) 
-                                VALUES (?, ?, ?, ?)''', (shard['Stud_id_low'], shard['Shard_id'], shard['Shard_size'], 1))
+                cursor.execute('''INSERT INTO ShardT (Stud_id_low, Shard_id, Shard_size) 
+                                VALUES (%s, %s, %s)''', (shard['Stud_id_low'], shard['Shard_id'], shard['Shard_size']))
 
             # Insert server-shard mappings into MapT table
             for server, shard_list in servers.items():
                 for shard_id in shard_list:
                     hashmaps[shard_id].add_server_instance(server)
-                    cursor.execute('''INSERT INTO MapT (Shard_id, Server_id) 
-                                VALUES (?, ?)''', (shard_id, server))
+                    cursor.execute('''INSERT INTO MapT (Shard_id, Server_id, Prim) 
+                                VALUES (%s, %s, %s)''', (shard_id, server,0))
 
             conn.commit()
             
@@ -103,10 +118,10 @@ def init():
                     
                     while True:
                         try:
-                            response = requests.post(f"http://{server_id}:5000/config",json={
+                            response = requests.post(f"http://{server_id}:5002/config",json={
                                 "schema":schema,
                                 "shards":servers[server_id]
-                            },timeout=2000)
+                            },timeout=20)
                             print(response.json())
                             break
                         except Exception as e:
@@ -136,6 +151,8 @@ def init():
     finally:
         cursor.close()
         conn.close()
+        response = requests.post("http://shm:5001/get_servers", json=servers)
+
     
 
 
@@ -182,7 +199,20 @@ def add():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
 
             payload = request.get_json()
@@ -207,16 +237,16 @@ def add():
                 hashmaps[shard_id]= ConsistentHashMap(512,0,9)
                 shardLocks[shard_id] = threading.Lock()
                 shards.append(shard)
-                cursor.execute('''INSERT INTO ShardT (Stud_id_low, Shard_id, Shard_size, valid_idx) 
-                                VALUES (?, ?, ?, ?)''', (shard['Stud_id_low'], shard['Shard_id'], shard['Shard_size'], 1))
+                cursor.execute('''INSERT INTO ShardT (Stud_id_low, Shard_id, Shard_size) 
+                                VALUES (%s, %s, %s)''', (shard['Stud_id_low'], shard['Shard_id'], shard['Shard_size']))
 
             # Insert server-shard mappings into MapT table
             for server, shard_list in new_servers.items():
                 for shard_id in shard_list:
 
                     hashmaps[shard_id].add_server_instance(server)
-                    cursor.execute('''INSERT INTO MapT (Shard_id, Server_id) 
-                                    VALUES (?, ?)''', (shard_id, server))
+                    cursor.execute('''INSERT INTO MapT (Shard_id, Server_id, Prim) 
+                                    VALUES (%s, %s, %s)''', (shard_id, server, 0))
 
             conn.commit()
             
@@ -232,7 +262,7 @@ def add():
                                 "schema":schema,
                                 "shards":new_servers[server]
                             },flush=True)
-                            response = requests.post(f"http://{server}:5000/config",json={
+                            response = requests.post(f"http://{server}:5002/config",json={
                                 "schema":schema,
                                 "shards":new_servers[server]
                             },timeout=2000)
@@ -247,15 +277,15 @@ def add():
                     print(newShardList,flush=True)
                     for sh in newShardList:
                         # hashmaps[sh].add_server_instance(server)
-                        cursor.execute("SELECT Server_id FROM MapT WHERE Shard_id=?",(sh,))
+                        cursor.execute("SELECT Server_id FROM MapT WHERE Shard_id=%s",(sh,))
                         row = cursor.fetchone()
                         sh_server = row[0]
-                        resp = requests.get(f"http://{sh_server}:5000/copy",json={
+                        resp = requests.get(f"http://{sh_server}:5002/copy",json={
                             "shards":[sh]
                         },timeout=20)
                         if resp.status_code == 200:
                             data = resp.json()[sh]
-                            resp1 = requests.post(f"http://{server}:5000/write",json={
+                            resp1 = requests.post(f"http://{server}:5002/write",json={
                                 "shard":sh,
                                 "curr_idx": 507,
                                 "data": data
@@ -266,13 +296,16 @@ def add():
                             print(f"Successfully copied {sh} from {sh_server} to {server}")
 
                     
-
+                
                 else:
                     response = {
                         "message": "Failed to create server",
                         "status": "failure"
                     }
                     return jsonify(response), 500
+                
+
+            respon = requests.post("http://shm:5001/get_servers", json=servers)
 
 
 
@@ -309,7 +342,20 @@ def remove():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
             
             payload = request.get_json()
@@ -333,7 +379,7 @@ def remove():
                         tbr_servers.append(server)
                         break
 
-            print(n)
+            print(n,flush=True)
             print(tbr_servers)
             print(22)
 
@@ -356,12 +402,7 @@ def remove():
                     N-=1
 
                     #remove server_id from MapT
-                    cursor.execute("DELETE FROM MapT WHERE Server_id=?",(tbr_servers[i],))
-                    
-                    
-
-                    
-                    
+                    cursor.execute("DELETE FROM MapT WHERE Server_id=%s",(tbr_servers[i],))
 
                     
                 else:
@@ -372,11 +413,11 @@ def remove():
             for sh in shards:
                 shard_id = sh["Shard_id"]
                 # hashmaps[shard_id].remove_server_instance(tbr_servers[i])
-                cursor.execute("SELECT * FROM MapT WHERE Shard_id=?",(shard_id,))
+                cursor.execute("SELECT * FROM MapT WHERE Shard_id=%s",(shard_id,))
                 rows = cursor.fetchall()
                 if len(rows) == 0:
                     del hashmaps[shard_id]
-                    cursor.execute("DELETE FROM ShardT WHERE Shard_id=?",(shard_id,))
+                    cursor.execute("DELETE FROM ShardT WHERE Shard_id=%s",(shard_id,))
                     shards_tbr.append(sh)
                     
             
@@ -403,6 +444,7 @@ def remove():
         return jsonify(response), 500
     
     finally:
+        response = requests.post("http://shm:5001/get_servers", json=servers)
         conn.commit()
         cursor.close()
         conn.close()
@@ -425,7 +467,20 @@ def read():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
 
             payload = request.get_json()
@@ -455,7 +510,7 @@ def read():
 
                 while True:
                     try:
-                        response = requests.post(f"http://{server}:5000/read",json={
+                        response = requests.post(f"http://{server}:5002/read",json={
                             "shard":shard,
                             "Stud_id":Stud_id_range
                         },timeout=2000)
@@ -502,7 +557,20 @@ def write():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
 
             payload = request.get_json()
@@ -545,25 +613,52 @@ def write():
                     if len(queries) == 0:
                         continue
 
-                    j_data= { "shard":shard_id,"curr_idx":shds[shard_id]["attributes"][3] ,"data":queries}
+                    j_data= { "shard":shard_id,"data":queries,"secondary_servers":[],"primary_server":1}
                     curr_idx = None
-                    print( shds[shard_id]["servers"])
-                    
-                    for server in shds[shard_id]["servers"]:
-                        print(f"Sending request to {server} :{shard_id}",flush=True)
-                        result = requests.post(f"http://{server}:5000/write",json=j_data,timeout=20)
+                    cursor.execute("SELECT Server_id,Prim FROM MapT WHERE Shard_id=%s",(shard_id,))
+                    rows = cursor.fetchall()
+                    PRIMARY_SERVER = None
+                    for row in rows:
+                        server_id ,primary = row
+                        if primary:
+                            PRIMARY_SERVER = server_id
+                        else:
+                            j_data["secondary_servers"].append(server_id)
+                    print(f"Sending request to primary server: {PRIMARY_SERVER} :{shard_id}",flush=True)
+
+                    try:
+                        print(j_data)
+                        result = requests.post(f"http://{PRIMARY_SERVER}:5002/write",json=j_data,timeout=15)
                         if result.status_code != 200:
+                            print(result.json(),flush=True)
                             return jsonify({
                                 "message":f"writes to shard {shard_id} failed",
                                 "data entries written successfully":written_data,
                                 "status":"failure"
                             }),400
-                        print(result.json())
-                        curr_idx = result.json()["current_idx"]
+                        
+                    except requests.RequestException as e:
+                        print(e)
+                        print(f"failed to write to {shard_id}....")
+                        print("Continuing to write to other shards")
+                        continue
+                    # print( shds[shard_id]["servers"])
+                    
+                    # for server in shds[shard_id]["servers"]:
+                    #     print(f"Sending request to {server} :{shard_id}",flush=True)
+                    #     result = requests.post(f"http://{server}:5002/write",json=j_data,timeout=20)
+                    #     if result.status_code != 200:
+                    #         return jsonify({
+                    #             "message":f"writes to shard {shard_id} failed",
+                    #             "data entries written successfully":written_data,
+                    #             "status":"failure"
+                    #         }),400
+                    #     print(result.json())
+                    #     curr_idx = result.json()["current_idx"]
 
-                    shds[shard_id]["attributes"][3]=curr_idx
-                    cursor.execute("UPDATE ShardT SET valid_idx= ? WHERE Stud_id_low = ? AND Shard_id = ?",(curr_idx,shds[shard_id]["attributes"][0],shard_id))
-                    conn.commit()
+                    # shds[shard_id]["attributes"][3]=curr_idx
+                    # cursor.execute("UPDATE ShardT SET valid_idx= %s WHERE Stud_id_low = %s AND Shard_id = %s",(curr_idx,shds[shard_id]["attributes"][0],shard_id))
+                    # conn.commit()
                     written_data.extend(queries)
             
             return jsonify({"message":f"{len(studs)} Data entries added","status":"success"})
@@ -595,7 +690,20 @@ def update():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
             print("hi")
             payload = request.get_json()
@@ -603,41 +711,46 @@ def update():
             data = payload['data']
             print(stud_id,flush=True)
 
-            cursor.execute("SELECT DISTINCT Shard_id FROM ShardT WHERE Stud_id_low <= ? AND Stud_id_low + Shard_size > ?", (stud_id, stud_id))
+            cursor.execute("SELECT DISTINCT Shard_id FROM ShardT WHERE Stud_id_low <= %s AND Stud_id_low + Shard_size > %s", (stud_id, stud_id))
             row = cursor.fetchone()
             print(row,flush=True)
 
             shard_id = row[0]
 
-            cursor.execute("SELECT DISTINCT Server_id FROM MapT WHERE Shard_id = ?", (shard_id,))
+            cursor.execute("SELECT DISTINCT Server_id ,Prim FROM MapT WHERE Shard_id = %s", (shard_id,))
             rows = cursor.fetchall()
+            PRIMARY_SERVER = None
+            j_data = {"shard":shard_id, "Stud_id":stud_id,"data":data,"secondary_servers":[],"primary_server":1}
             print(rows)
             if rows:
                 for row in rows:
                     
-                    server = row[0]
+                    server_id ,primary = row
+                    if primary:
+                        PRIMARY_SERVER = server_id
+                    else:
+                        j_data["secondary_servers"].append(server_id)
+                print(f"Sending request to primary server: {PRIMARY_SERVER} :{shard_id}")
 
-                    while True:
-                        try:
-                            response = requests.put(f"http://{server}:5000/update",json={
-                                "shard":shard_id,
-                                "Stud_id":stud_id,
-                                "data": data
-                            },timeout=2000)
-                            print(response.json())
-                            
-                            break
-
-                        except Exception as e:
-                            print("retrying")
-                            continue
+                try:
+                    print(j_data)
+                    result = requests.put(f"http://{PRIMARY_SERVER}:5002/update",json=j_data,timeout=15)
+                    if result.status_code != 200:
+                        return jsonify({
+                            "message":" failed",
+                            "status":"failure"
+                        }),400
                         
-                response = {
-                    "message": f"Data entry fo Stud_id: {stud_id} updated",
-                    "status": "success"
-                }
-                return jsonify(response), 200
-            
+                    else:
+                        return jsonify({
+                            "message":"success"
+                        }),200
+                
+                except requests.RequestException as e:
+                        print(e)
+                        print(f"failed to write to {shard_id}....")
+                        print("Continuing to write to other shards")
+
             else:
                 response = {
                     "message": "No server found",
@@ -671,46 +784,65 @@ def delete():
     try:
         with lock1:
 
-            conn = sqlite3.connect(DB_FILE,timeout=60*60)
+            while True:
+                try:
+                    conn = mysql.connector.connect(
+                        host="metadb",
+                        user="root",
+                        password="giri123456",
+                        database="metadb"
+                    )
+                    print("connected")
+                    break
+                except  Exception as e:
+                    time.sleep(1)
+                    continue
+
             cursor = conn.cursor()
 
             payload = request.get_json()
             stud_id = payload['Stud_id']
             print(stud_id)
 
-            cursor.execute("SELECT DISTINCT Shard_id FROM ShardT WHERE Stud_id_low <= ? AND Stud_id_low + Shard_size > ?", (stud_id, stud_id))
+            cursor.execute("SELECT DISTINCT Shard_id FROM ShardT WHERE Stud_id_low <= %s AND Stud_id_low + Shard_size > %s", (stud_id, stud_id))
             row = cursor.fetchone()
 
             shard_id = row[0]
 
-            cursor.execute("SELECT DISTINCT Server_id FROM MapT WHERE Shard_id = ?", (shard_id,))
+            cursor.execute("SELECT  Server_id,Prim FROM MapT WHERE Shard_id = %s", (shard_id,))
             rows = cursor.fetchall()
+            PRIMARY_SERVER = None
+            j_data = {"shard":shard_id, "Stud_id":stud_id,"secondary_servers":[],"primary_server":1}
 
             if rows:
                 for row in rows:
                     
-                    server = row[0]
+                    server_id ,primary = row
+                    if primary:
+                        PRIMARY_SERVER = server_id
+                    else:
+                        j_data["secondary_servers"].append(server_id)
+                print(f"Sending request to primary server: {PRIMARY_SERVER} :{shard_id}")
 
-                    while True:
-                        try:
-                            response = requests.delete(f"http://{server}:5000/del",json={
-                                "shard":shard_id,
-                                "Stud_id":stud_id,
-                            },timeout=2000)
-                            print(response.json())
-                            
-                            break
-
-                        except Exception as e:
-                            print("retrying")
-                            continue
+                try:
+                    print(j_data)
+                    result = requests.delete(f"http://{PRIMARY_SERVER}:5002/del",json=j_data,timeout=15)
+                    if result.status_code != 200:
+                        print(result.json(),flush=True)
+                        return jsonify({
+                            "message":" failed",
+                            "status":"failure"
+                        }),400
                         
-                response = {
-                    "message": f"Data entry with Stud_id:{stud_id}removed from all replicas",
-                    "status": "success"
-                }
-                return jsonify(response), 200
-            
+                    else:
+                        return jsonify({
+                            "message":"success"
+                        }),200
+                
+                except requests.RequestException as e:
+                        print(e)
+                        print(f"failed to write to {shard_id}....")
+                        print("Continuing to write to other shards")
             else:
                 response = {
                     "message": "No server found",
@@ -748,7 +880,7 @@ def delete():
 #     dead_server_shards = servers.pop(server_id)
 #     conn = sqlite3.connect(DB_FILE,timeout=60*60)
 #     cursor = conn.cursor()
-#     cursor.execute("DELETE FROM MapT WHERE Server_id=?",(server_id,))
+#     cursor.execute("DELETE FROM MapT WHERE Server_id=%s",(server_id,))
 #     new_server = "rspn"+server_id
     
 #     command =  f"docker run --name {new_server} --network net1 -d server"
@@ -776,7 +908,7 @@ def delete():
 #             hashmaps[sh].add_server_instance(new_server)
 #             hashmaps[sh].remove_server_instance(server_id)
 
-#             cursor.execute("SELECT Server_id FROM MapT WHERE Shard_id=?",(sh,))
+#             cursor.execute("SELECT Server_id FROM MapT WHERE Shard_id=%s",(sh,))
 #             row = cursor.fetchone()
 #             sh_server = row[0]
 #             resp = requests.get(f"http://{sh_server}:5000/copy",json={
@@ -794,7 +926,7 @@ def delete():
 #                 print(resp1.json())
 #                 if not resp1.ok:
 #                     return "some error"
-#                 cursor.execute("INSERT INTO MapT (Shard_id, Server_id) VALUES (?, ?)",(new_server,sh))
+#                 cursor.execute("INSERT INTO MapT (Shard_id, Server_id) VALUES (%s, %s)",(new_server,sh))
 #                 print(f"Successfully copied {sh} from {sh_server} to {new_server}")
 #     servers[new_server] = dead_server_shards
 #     print(f"Successfully respawned {server_id}:{new_server}")

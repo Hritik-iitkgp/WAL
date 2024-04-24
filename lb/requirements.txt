@@ -2,3 +2,5 @@ Flask
 requests
 aiohttp
 mysql-connector-python
+fastapi
+uvicorn
