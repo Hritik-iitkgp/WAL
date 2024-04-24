@@ -1,4 +1,4 @@
-# Scalable Database with Sharding
+# Scalable Database with Sharding and WAL
 
 This repository contains the implementation of a distributed database system along with a load balancer using consistent hashing also implementing WAL. The system is designed to efficiently handle read and write operations across multiple shards and server replicas.
 
