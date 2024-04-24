@@ -90,4 +90,9 @@ The distributed database system manages data entries in a sharded manner across 
   - **Task A-2: Increase Shard Replicas Performance Analysis:** Burra Nitish
   - **Task A-3: Increase Servers and Shards Performance Analysis:** Burra Nitish
   - **Task A-4: Endpoint Check and Container Dropping:** Chandra Sekhara Azad
+ 
+  Assumptions:
+The input json object formats are followed
+Assumed that docker , docker compose and required libreries are installed with the python env being used.
+
 
