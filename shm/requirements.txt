@@ -1,2 +1,5 @@
 flask
 mysql-connector-python
+requests
+fastapi
+uvicorn
