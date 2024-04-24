@@ -1,11 +1,17 @@
-from flask import Flask, jsonify, request
+# from flask import Flask, jsonify, request
+from fastapi import FastAPI,Request,HTTPException
 import os
 import sqlite3
+import sys
+from log import *
 import time
-app = Flask(__name__)
+import requests
+import uvicorn
+#app = Flask(__name__)
 
+app = FastAPI() 
 # # Function to create MySQL connection
-# def create_mysql_connection():
+# async def create_mysql_connection():
 #     return mysql.connector.connect(
 #         host=os.getenv("MYSQL_HOST"),
 #         user=os.getenv("MYSQL_USER","hritik"),
@@ -20,13 +26,20 @@ app = Flask(__name__)
 #     except Exception as e:
 #         time.sleep(0.04)
 
+
+
 conn = sqlite3.connect("student.db",check_same_thread=False)
 
+logger = {}
 
-@app.route('/config', methods=['POST'])
-def config():
+commit_log = {} 
+
+@app.post("/config")
+async def config(request : Request):
+    global logger
+    global commit_log
     try:
-        payload = request.get_json()
+        payload = await request.json()
 
         # Extract schema and shards information from the payload
         schema = payload['schema']
@@ -39,7 +52,7 @@ def config():
 
         # Create tables for each shard
         for shard in shards:
-            table_name = f"StudT_{shard}"
+            table_name = f"{shard}"
             create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} ("
             for column, dtype in zip(schema['columns'], schema['dtypes']):
                 create_table_query += f"{column} {'INT' if dtype=='Number' else 'VARCHAR(100)'}, "
@@ -47,32 +60,52 @@ def config():
             cursor.execute(create_table_query)
             conn.commit()
 
+        for shard in shards:
+             logger[shard] = FileLogger("logs", str(shard) + ".log")
+             commit_log[shard] = 0
+
         # Close cursor and connection
         cursor.close()
         response = {
             "message": f"Server:{', '.join(shards)} configured",
             "status": "success"
         }
-        return jsonify(response), 200
+        return response
 
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
     except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
+        print(e)
+        raise HTTPException(status_code=400,detail = "Invalid")
 
-@app.route('/heartbeat', methods=['GET'])
-def heartbeat():
+@app.get('/heartbeat')
+async def heartbeat():
     response={
         "message": ""
     }
-    return jsonify(response), 200
+    return response
 
-@app.route('/copy', methods=['GET'])
-def copy():
+
+@app.post('/get_commits')
+async def getcommits(request: Request):
+    payload = await request.json()
+
+    global commit_log
+
+    shard_id = payload['shard']
+
+    response = {
+        "commits": commit_log[shard_id]
+    }
+
+    return response
+
+
+@app.get('/copy')
+async def copy(request : Request):
     try:
-        payload = request.get_json()
+        payload = await request.json()
         shards_to_copy = payload['shards']
         # 
         global conn
@@ -82,7 +115,7 @@ def copy():
             "status": "success"
         }
         for shard in shards_to_copy:
-            table_name = f"StudT_{shard}"
+            table_name = f"{shard}"
             query = f"SELECT * FROM {table_name}"
             cursor.execute(query)
             shard_data = cursor.fetchall()
@@ -92,19 +125,17 @@ def copy():
         cursor.close()
 
         # Add status to response data
-        return jsonify(response), 200
+        return response
 
-    except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
-
-@app.route('/read', methods=['POST'])
-def read():
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
+    except:
+        raise HTTPException(status_code=400,detail = "Invalid")
+@app.post('/read')
+async def read(request : Request):
     try:
-        payload = request.get_json()
+        payload = await request.json()
         keys = list(payload.keys())
         shard_id = payload['shard']
         stud_id_range = payload[keys[1]]
@@ -115,7 +146,7 @@ def read():
         cursor = conn.cursor()
         # Retrieve the requested data 
         data=[]
-        table_name = f"StudT_{shard_id}" 
+        table_name = f"{shard_id}" 
         query = f"SELECT * FROM {table_name} WHERE {keys[1]} >= {low} AND {keys[1]} <= {high}"
         cursor.execute(query)
         data = cursor.fetchall()
@@ -126,95 +157,229 @@ def read():
             "data": data,
             "status": "success"
         }
-        return jsonify(response), 200
+        return response
 
-    except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
+    except:
+        raise HTTPException(status_code=400,detail = "Invalid")
 
-@app.route('/write', methods=['POST'])
-def write():
+
+@app.post('update_local_data')
+async def update_local_data(request : Request):
     try:
-        payload = request.get_json()
+        req = request.json()
+        server = req["servers"]
+        shard = req["shards"]
+        list_to_update = req["data"]
+        for row in list_to_update:
+            if row["type"].lower() == "write":
+                requests.post(
+                    f"http://{server}:5002/write",
+                    json={"shard": shard, "data": row["data"]["data"]},
+                )
+            elif row["type"].lower() == "delete":
+                requests.delete(
+                    f"http://{server}:5002/del",
+                    json={"shard": shard, "Stud_id": row["data"]["Stud_id"]},
+                )
+            elif row["type"].lower() == "update":
+                # "shard": shard, "Stud_id": stud_id, "data": data
+                requests.put(
+                    f"http://{server}:5002/update",
+                    json={
+                        "shard": shard,
+                        "Stud_id": row["data"]["Stud_id"],
+                        "data": row["data"]["data"],
+                    },
+                )
+            else:
+                print("Incorrect type ", row["type"])
+    
+    except:
+        raise HTTPException(status_code=400,detail = "Invalid")
+
+    return {"message": "Updated the local data successfully", "status": "success"}
+
+@app.post('/write')
+async def write(request : Request):
+    global commit_log
+    global logger
+    try:
+        payload = await request.json()
         print(payload)
         shard_id = payload['shard']
-        curr_idx = payload['curr_idx']
         data_entries = payload['data']
 
-        # wrtite 
         cursor = conn.cursor()
-        columns = list(data_entries[0].keys())
-        column_names = ", ".join(columns)
-        placeholders = ", ".join(["?" for _ in columns])
-        # Insert data into the shard table
-        table_name = f"StudT_{shard_id}"
-        insert_query = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"
-        insert_values = [[entry[column] for column in columns] for entry in data_entries]
-        cursor.executemany(insert_query, insert_values)
 
-        # Commit changes
-        conn.commit()        
-        new_idx = curr_idx + len(data_entries)
+        if payload["primary_server"] == 1:
+            print("I am primary")
+            secondary_servers = payload["secondary_servers"]
+            votes = 0
+            for row in data_entries:
+                id = int(logger[shard_id].get_last_log_id()) + 1
+                log = Log(id, LogType(0), row, datetime.now())
+                logger[shard_id].add_log(log)
+            for server in secondary_servers:
+                while True:
+                    try:
+                        print("sending req to sec servers",flush=True)
+                        response = requests.post(f"http://{server}:5002/write",json={
+                            "shard":shard_id,
+                            "data": data_entries,
+                            "primary_server":0,
+                            "commit" : commit_log[shard_id]
+                        },timeout=200)
+                        if response.status_code == 200:
+                            response = response.json()
+                            if response.get('messsage',0) == "Not Uptodate":
+                                curr_commit_index = response.get('last_commit',0)
+                                list_to_update = logger[shard_id].get_requests_from_given_index(shard_id, int(curr_commit_index) + 1)
+                                print(list_to_update)
+                                resp = requests.post(
+                                    f"http://{server}:5002/update_local_data",
+                                    json={"shards": shard_id,"data":list_to_update,"servers":server},
+                                )
+                                resp = resp.json()
+                                print(resp)
+                                break
+                            
+                            votes += 1
+                            break
+                    except Exception as e:
+                        print("retrying...")
+            if votes >= len(secondary_servers) // 2:
+                commit_log[shard_id] = logger[shard_id].get_last_log_id()
+                for row in data_entries:
+                    cursor.execute(
+                        f"INSERT INTO {shard_id} (Stud_id, Stud_name, Stud_marks) VALUES (?, ?, ?)",
+                        (row["Stud_id"], row["Stud_name"], row["Stud_marks"]),
+                    )
+                conn.commit()
+        else:
+            commit_index = payload["commit"]
+            curr_commit_index = logger[shard_id].get_last_log_id()
+            if commit_index != curr_commit_index:
+                return {"message": "Not Uptodate", "last_commit": curr_commit_index}
+            for row in data_entries:
+                id = int(logger[shard_id].get_last_log_id()) + 1
+                log = Log(id, LogType(0), row, datetime.now())
+                logger[shard_id].add_log(log)
+            for row in data_entries:
+                cursor.execute(
+                    f"INSERT INTO {shard_id} (Stud_id, Stud_name, Stud_marks) VALUES (?, ?, ?)",
+                    (row["Stud_id"], row["Stud_name"], row["Stud_marks"]),
+                )
+            commit_log[shard_id] = logger[shard_id].get_last_log_id()
+            conn.commit()
 
-        response = {
-            "message": "Data entries added",
-            "current_idx": new_idx,
-            "status": "success"
-        }
-        return jsonify(response), 200
+        response = {"message": "Data entries added", "status": "success"}
 
+        return response       #
+        
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
     except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
+        print(e)
+        raise HTTPException(status_code=400,detail = "Invalid")
 
-@app.route('/update', methods=['PUT'])
-def update():
+@app.put('/update')
+async def update(request : Request):
     try:
         global conn
-        payload = request.get_json()
-        keys = list(payload.keys())
+        payload = await request.json()
+        
         shard_id = payload['shard']
-        stud_id = payload[keys[1]]
+        stud_id = payload['Stud_id']
+        
         updated_data = payload['data']
+        stud_marks = updated_data['Stud_marks']
+        stud_name = updated_data['Stud_name']
 
         # Create MySQL cursor
         cursor = conn.cursor()
 
-        # Update data entry in the shard table
-        table_name = f"StudT_{shard_id}"
-        update_query = f"UPDATE {table_name} SET "
-        update_query += ", ".join([f"{column}=?" for column in updated_data.keys()])
-        update_query += f" WHERE {keys[1]} = ?"
-        update_values = list(updated_data.values()) + [stud_id]
-        cursor.execute(update_query, update_values)
+        if payload["primary_server"] == 1:
+            secondary_servers = payload["secondary_servers"]
+            votes = 0
+            
+            id = int(logger[shard_id].get_last_log_id()) + 1
+            log = Log(id, LogType(1), {"shard":shard_id,"Stud_id":stud_id,"data":updated_data}, datetime.now())
+            logger[shard_id].add_log(log)
+            for server in secondary_servers:
+                while True:
+                    try:
+                        response = requests.put(f"http://{server}:5002/update",json={
+                            "shard":shard_id,
+                            "Stud_id":stud_id,
+                            "data": updated_data,
+                            "primary_server":0,
+                            "commit" : commit_log[shard_id]
+                        },timeout=200)
+                        if response.status_code == 200:
 
-        # Commit changes
-        conn.commit()
+                            response = response.json()
+                            if response.get('messsage',0)== "Not Uptodate":
+                                curr_commit_index = response.get('last_commit',0)
+                                list_to_update = logger[shard_id].get_requests_from_given_index(shard_id, int(curr_commit_index) + 1)
+                                print(list_to_update)
+                                resp = requests.post(
+                                    f"http://{server}:5002/update_local_data",
+                                    json={"shards": shard_id,"data":list_to_update,"servers":server},
+                                )
+                                resp = resp.json()
+                                print(resp)
+                                break
+                            
+                            votes += 1
+                            break
+                    except Exception as e:
+                        print("retrying...")
+            if votes >= len(secondary_servers) // 2:
+                commit_log[shard_id] = logger[shard_id].get_last_log_id()
+                
+                cursor.execute(
+                    f"UPDATE {shard_id} SET Stud_name = ? , Stud_marks = ? WHERE Stud_id = ?",
+                    (stud_name, stud_marks, stud_id),
+                )
+                conn.commit()
+        else:
+            commit_index = payload["commit"]
+            curr_commit_index = logger[shard_id].get_last_log_id()
+            if commit_index != curr_commit_index:
+                return {"message": "Not Uptodate", "last_commit": curr_commit_index}
+            
+            id = int(logger[shard_id].get_last_log_id()) + 1
+            log = Log(id, LogType(1), {"shard":shard_id,"Stud_id":stud_id,"data":updated_data}, datetime.now())
+            logger[shard_id].add_log(log)
+            
+            cursor.execute(
+                 f"UPDATE {shard_id} SET Stud_name = ? , Stud_marks = ? WHERE Stud_id = ?",
+                    (stud_name, stud_marks, stud_id),
+            )
+            commit_log[shard_id] = logger[shard_id].get_last_log_id()
+            conn.commit()
 
         # Close cursor
         cursor.close()
         response = {
             "message": f"Data entry for Stud_id:{stud_id} updated",
             "status": "success"        }
-        return jsonify(response), 200
+        return response
 
-    except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
+    except:
+        raise HTTPException(status_code=400,detail = "Invalid")
 
-@app.route('/del', methods=['DELETE'])
-def delete():
+@app.delete('/del')
+async def delete(request : Request):
     try:
-        payload = request.get_json()
+        payload = await request.json()
         shard_id = payload['shard']
         stud_id = payload['Stud_id']
 
@@ -223,13 +388,67 @@ def delete():
         global conn
         cursor = conn.cursor()
 
-        # Delete data entry from the shard table
-        table_name = f"StudT_{shard_id}"
-        delete_query = f"DELETE FROM {table_name} WHERE Stud_id = ?"
-        cursor.execute(delete_query, (stud_id,))
-
-        # Commit changes
-        conn.commit()
+        if payload["primary_server"] == 1:
+            print("I am primary")
+            secondary_servers = payload["secondary_servers"]
+            votes = 0
+            
+            id = int(logger[shard_id].get_last_log_id()) + 1
+            log = Log(id, LogType(2), {"Stud_id":stud_id}, datetime.now())
+            logger[shard_id].add_log(log)
+            for server in secondary_servers:
+                while True:
+                    try:
+                        print("Sending sec ser req",flush=True)
+                        response = requests.delete(f"http://{server}:5002/del",json={
+                            "shard":shard_id,
+                            "Stud_id":stud_id,
+                            "primary_server":0,
+                            "commit" : commit_log[shard_id]
+                        },timeout=200)
+                        if response.status_code == 200:
+                            response = response.json()
+                            if response.get('messsage',0) == "Not Uptodate":
+                                curr_commit_index = response.get('last_commit',0)
+                                list_to_update = logger[shard_id].get_requests_from_given_index(shard_id, int(curr_commit_index) + 1)
+                                print(list_to_update)
+                                resp = requests.post(
+                                    f"http://{server}:5002/update_local_data",
+                                    json={"shards": shard_id,"data":list_to_update,"servers":server},
+                                )
+                                resp = resp.json()
+                                print(resp)
+                                break
+                            
+                            votes += 1
+                            break
+                    except Exception as e:
+                        print("retrying...")
+            if votes >= len(secondary_servers) // 2:
+                commit_log[shard_id] = logger[shard_id].get_last_log_id()
+                
+                cursor.execute(
+                    f"DELETE FROM {shard_id} WHERE Stud_id = ?",
+                    ( stud_id,),
+                )
+                conn.commit()
+        else:
+            print("I am sec")
+            commit_index = payload["commit"]
+            curr_commit_index = logger[shard_id].get_last_log_id()
+            if commit_index != curr_commit_index:
+                return {"message": "Not Uptodate", "last_commit": curr_commit_index}
+            
+            id = int(logger[shard_id].get_last_log_id()) + 1
+            log = Log(id, LogType(1), {"Stud_id":stud_id}, datetime.now())
+            logger[shard_id].add_log(log)
+            
+            cursor.execute(
+                 f"DELETE FROM {shard_id} WHERE Stud_id = ?",
+                    ( stud_id,),
+            )
+            commit_log[shard_id] = logger[shard_id].get_last_log_id()
+            conn.commit()
 
         # Close cursor
         cursor.close()
@@ -237,14 +456,14 @@ def delete():
             "message": f"Data entry with Stud_id:{stud_id} removed",
             "status": "success"
         }
-        return jsonify(response), 200
+        return response
 
+    except sqlite3.Error as err:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail = f"An error {err} occurred.")
     except Exception as e:
-        response = {
-            "message": str(e),
-            "status": "error"
-        }
-        return jsonify(response), 500
-
+        print(e,flush= True)
+        raise HTTPException(status_code=400,detail = "Invalid")
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    print("started server")
+    uvicorn.run(app,host='0.0.0.0', port=5002)
