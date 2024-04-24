@@ -1,6 +1,6 @@
-# Consistent Database with Sharding and WAL
+# Scalable Database with Sharding
 
-This repository contains the implementation of a distributed database system along with a load balancer using consistent hashing. The system is designed to efficiently handle read and write operations across multiple shards and server replicas.
+This repository contains the implementation of a distributed database system along with a load balancer using consistent hashing also implementing WAL. The system is designed to efficiently handle read and write operations across multiple shards and server replicas.
 
 ## Table of Contents
 - [Introduction](#introduction)
@@ -14,7 +14,7 @@ This repository contains the implementation of a distributed database system alo
 
 ## Introduction
 
-The distributed database system manages data entries in a sharded manner across multiple server containers. The load balancer ensures optimal distribution of read requests among shard replicas using consistent hashing, while write requests are coordinated to maintain data consistency.
+The distributed database system manages data entries in a sharded manner across multiple server containers. The load balancer ensures optimal distribution of read requests among shard replicas using consistent hashing, while write requests are coordinated to maintain data consistency. A Shard Manager component is added to detect any server is down and then respawning a new server and handle the consequences.
 
 ## Tasks
 
@@ -50,14 +50,14 @@ The distributed database system manages data entries in a sharded manner across 
 - **Task A-3:** Increase Servers and Shards Performance Analysis: Increase the number of servers and shards, and measure the write speed for 10,000 writes and read speed for 10,000 reads.
 - **Task A-4:** Endpoint Check and Container Dropping: Verify the correctness of all endpoints and simulate dropping a server container to observe the load balancer behavior.
 - **Output for A-1**:
-  - **Time taken for 10000 write requests:** 627.26 seconds 
-  - ****Time taken for 10000 read requests:** 193.95 seconds
+  - **Time taken for 10000 write requests:** 843.27 seconds 
+  - ****Time taken for 10000 read requests:** 341.817 seconds
  - **Output for A-2**:
-  - **Time taken for 10000 write requests:** 985.15 seconds 
-  - ****Time taken for 10000 read requests:** 190.65 seconds
+  - **Time taken for 10000 write requests:** 1240.23 seconds 
+  - ****Time taken for 10000 read requests:** 345.29 seconds
 - **Output for A-3**:
-  - **Time taken for 10000 write requests:** 1279.14 seconds 
-  - ****Time taken for 10000 read requests:** 191.15 seconds
+  - **Time taken for 10000 write requests:** 1624.83 seconds 
+  - ****Time taken for 10000 read requests:** 354.93 seconds
 
 ## Setup Instructions
 
@@ -76,18 +76,18 @@ The distributed database system manages data entries in a sharded manner across 
 - **Server Management Implementation**:
   - **Server Configuration and Setup:** Hritik Jaiswal
   - **Heartbeat Functionality:** Hritik Jaiswal
-  - **Data Copying for Failover:** Dasari Giridhar
-  - **CRUD Operations (Read, Write, Update, Delete):** Hritik Jaiswal
+  - **Data Copying for Failover:** Chandra Sekhara Azad
+  - **CRUD Operations (Read, Write, Update, Delete):** Chandra Sekhara Azad
 
-- **Load Balancer Implementation**:
-  - **Endpoint Initialization and Status:** Chandra Sekhara Azad
-  - **Adding and Removing Servers:** Burra Nitish
+- **Load Balancer & Shard Manager Implementation**:
+  - **Endpoint Initialization and Status:** Dasari Giridhar
+  - **Adding and Removing Servers:** Hritik Jaiswal
   - **CRUD Operations (Read, Write, Update, Delete):** Dasari Giridhar
-  - **Consistent Hashing Algorithm:** Chandra Sekhara Azad
+  - **Consistent Hashing Algorithm:** Burra Nitish
 
 - **Performance Analysis Tasks**:
-  - **Task A-1: Default Configuration Performance Analysis:** CHandra Sekhara Azad
+  - **Task A-1: Default Configuration Performance Analysis:** Dasari Giridhar
   - **Task A-2: Increase Shard Replicas Performance Analysis:** Burra Nitish
   - **Task A-3: Increase Servers and Shards Performance Analysis:** Burra Nitish
-  - **Task A-4: Endpoint Check and Container Dropping:** Dasari Giridhar
+  - **Task A-4: Endpoint Check and Container Dropping:** Chandra Sekhara Azad
 

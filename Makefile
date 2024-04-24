@@ -17,7 +17,7 @@
 	
 
 start:
-	# sudo docker-compose up -d metadb
+	sudo docker-compose up -d metadb
 	sudo docker-compose up lb shm  # Include shard_manager service
 
 build:
