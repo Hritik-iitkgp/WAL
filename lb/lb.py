@@ -305,7 +305,7 @@ def add():
                     return jsonify(response), 500
                 
 
-            respon = requests.post("http://shm:5001/get_servers", json=servers)
+            
 
 
 
@@ -327,6 +327,7 @@ def add():
     finally:
         cursor.close()
         conn.close()
+        respon = requests.post("http://shm:5001/get_servers", json=servers)
 
 
 
@@ -444,10 +445,11 @@ def remove():
         return jsonify(response), 500
     
     finally:
-        response = requests.post("http://shm:5001/get_servers", json=servers)
+        
         conn.commit()
         cursor.close()
         conn.close()
+        response = requests.post("http://shm:5001/get_servers", json=servers)
 
 
 
