@@ -16,7 +16,7 @@ servers={}
 hashmaps={}
 shardLocks={}
 lock1 = threading.Lock()
-
+primary = {}
 app = Flask(__name__)
 
 # DB_FILE = "metadata.db"
@@ -40,6 +40,10 @@ app = Flask(__name__)
 #     os.remove(DB_FILE)
 
 
+
+
+# ******************************************************INIT***************************************************
+
 @app.route('/init', methods=['POST'])
 def init():
     global N
@@ -47,6 +51,7 @@ def init():
     global shards
     global servers
     global hashmaps
+    global primary
     
     
     try:
@@ -152,10 +157,16 @@ def init():
         cursor.close()
         conn.close()
         response = requests.post("http://shm:5001/get_servers", json=servers)
+        response = response.json()
+        primary = response.get('Primary',0)
+        print(primary,flush=True)
+
 
     
 
 
+
+# ******************************************************STATUS***************************************************
 
 @app.route('/status', methods=['GET'])
 def status():
@@ -163,6 +174,18 @@ def status():
     global schema
     global shards
     global servers
+    global primary
+
+    ret_shards = []
+
+    for row in shards:
+        new_row = row.copy()
+        print(new_row,flush=True)
+        new_row["Primary_server"] = primary[new_row["Shard_id"]]
+        print(new_row,flush=True)
+        ret_shards.append(new_row)
+
+    print(ret_shards,flush=True)
     
     try:
         with lock1:
@@ -170,7 +193,7 @@ def status():
             response = {
                 "N": N,
                 "schema": schema,
-                "shards": shards,
+                "shards": ret_shards,
                 "servers": servers,
                 "status": "success"
             }
@@ -186,6 +209,8 @@ def status():
 
 
 
+# ******************************************************ADD***************************************************
+
 @app.route('/add', methods=['POST'])
 def add():
     global N
@@ -193,6 +218,7 @@ def add():
     global shards
     global servers
     global hashmaps
+    global primary
 
     
 
@@ -328,15 +354,20 @@ def add():
         cursor.close()
         conn.close()
         respon = requests.post("http://shm:5001/get_servers", json=servers)
+        respon = respon.json()
+        primary = respon.get('Primary',0)
 
 
 
+
+# *****************************************************REMOVE***************************************************
 
 @app.route('/rm', methods=['DELETE'])
 def remove():
     global N
     global schema
     global shards
+    global primary
     global servers
     global hashmaps
 
@@ -450,13 +481,15 @@ def remove():
         cursor.close()
         conn.close()
         response = requests.post("http://shm:5001/get_servers", json=servers)
+        response = response.json()
+        primary = response.get('Primary',0)
 
 
 
 
 
 
-
+# ******************************************************READ***************************************************
 
 @app.route('/read', methods=['POST'])
 def read():
@@ -464,6 +497,7 @@ def read():
     global schema
     global shards
     global servers
+    global primary
     global hashmaps
 
     try:
@@ -547,6 +581,9 @@ def read():
 
 
 
+
+# ******************************************************WRITE***************************************************
+
 @app.route('/write', methods=['POST'])
 def write():
     global N
@@ -554,6 +591,7 @@ def write():
     global shards
     global servers
     global hashmaps
+    global primary
     
 
     try:
@@ -680,12 +718,14 @@ def write():
 
 
 
+# ******************************************************UPDATE***************************************************
 
 @app.route('/update', methods=['PUT'])
 def update():
     global N
     global schema
     global shards
+    global primary
     global servers
     global hashmaps
 
@@ -775,11 +815,14 @@ def update():
 
 
 
+# ******************************************************DELETE***************************************************
+
 @app.route('/del', methods=['DELETE'])
 def delete():
     global N
     global schema
     global shards
+    global primary
     global servers
     global hashmaps
 
@@ -864,87 +907,78 @@ def delete():
         cursor.close()
         conn.close()
     
-
-# def is_dead(server_id)->bool:
-#     print(f"checking the heartbeat of {server_id}...",flush=True)
-#     for i in range(3):
-#        try:
-#          resp = requests.get(f"http://{server_id}:5000/heartbeat",timeout=15)
-#          if resp.ok:
-#              return False
-#        except requests.RequestException as e:
-#            time.sleep(0.01)
-#            print("Trying again....",flush=True)
-#     return True
-
-# def respawn(server_id):
-#     global servers
-#     dead_server_shards = servers.pop(server_id)
-#     conn = sqlite3.connect(DB_FILE,timeout=60*60)
-#     cursor = conn.cursor()
-#     cursor.execute("DELETE FROM MapT WHERE Server_id=%s",(server_id,))
-#     new_server = "rspn"+server_id
     
-#     command =  f"docker run --name {new_server} --network net1 -d server"
-#     result = subprocess.run(command,shell=True,text=True)
+
+
+# # ******************************************************READ SERVER DATA***************************************************
+
+@app.route('/read/<server_id>', methods=['GET'])
+def read_server_data(server_id):
+    
+    global N
+    global schema
+    global shards
+    global servers
+    global primary
+    global hashmaps
+    
+    
+    try:
+        with lock1:
+
+            print(server_id,flush=True)
             
-#     if result.returncode == 0:
-#         while True:
-#                     try:
-#                         print({
-#                             "schema":schema,
-#                             "shards":dead_server_shards
-#                         },flush=True)
-#                         response = requests.post(f"http://{new_server}:5000/config",json={
-#                             "schema":schema,
-#                             "shards":dead_server_shards
-#                         },timeout=2000)
-#                         print(response.json())
-#                         break
-#                     except Exception as e:
-#                         # print("retrying")
-#                         continue
+            # Check if the server_id exists in the servers dictionary
+            if server_id not in servers:
+                response = {
+                    "message": "Server ID not found",
+                    "status": "failure"
+                }
+                return jsonify(response), 404
 
-#         for sh in dead_server_shards:
+            # Get the shards assigned to the specified server_id
+            shards_on_server = servers[server_id]
 
-#             hashmaps[sh].add_server_instance(new_server)
-#             hashmaps[sh].remove_server_instance(server_id)
 
-#             cursor.execute("SELECT Server_id FROM MapT WHERE Shard_id=%s",(sh,))
-#             row = cursor.fetchone()
-#             sh_server = row[0]
-#             resp = requests.get(f"http://{sh_server}:5000/copy",json={
-#                 "shards":[sh]
-#             },timeout=20)
-#             if resp.status_code == 200:
-#                 data = resp.json()[sh]
-#                 if len(data) == 0:
-#                     continue
-#                 resp1 = requests.post(f"http://{new_server}:5000/write",json={
-#                     "shard":sh,
-#                     "curr_idx": 507,
-#                     "data": data
-#                 })
-#                 print(resp1.json())
-#                 if not resp1.ok:
-#                     return "some error"
-#                 cursor.execute("INSERT INTO MapT (Shard_id, Server_id) VALUES (%s, %s)",(new_server,sh))
-#                 print(f"Successfully copied {sh} from {sh_server} to {new_server}")
-#     servers[new_server] = dead_server_shards
-#     print(f"Successfully respawned {server_id}:{new_server}")
-    
 
-# def checking_health():
-#     while True:
-#         # get locks over shared resource 
-#         time.sleep(30*2)
-#         with lock1:
-#             print("aqcuired the lock| health check")
-#             __servers = list(servers)
-#             for server_id in __servers:
-#                 if is_dead(server_id):
-#                     respawn(server_id)
-#             print("released the lock| health check")
+          
+            
+
+            
+            # Prepare the response JSON
+            server_data = {}
+            stud_range = {"low": 0, "high": 99999999999}
+            for shard_id in shards_on_server:
+                
+                while True:
+                    try:
+                        response = requests.post(f"http://{server_id}:5002/read",json={
+                            "shard":shard_id,
+                            "Stud_id":stud_range
+                        },timeout=2000)
+
+                        print(response.json())
+                        studs = response.json()["data"]
+                        server_data[shard_id] = studs
+                        break
+
+                    except Exception as e:
+                        print("retrying")
+                        continue
+
+            response = {
+                "data": server_data,
+                "status": "success"
+            }
+            return jsonify(response), 200
+
+    except Exception as e:
+        response = {
+            "message": str(e),
+            "status": "error"
+        }
+        return jsonify(response), 500
+
 
 if __name__ == "__main__":
     # t1 = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000,debug=True))
