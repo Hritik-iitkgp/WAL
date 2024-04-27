@@ -129,10 +129,10 @@ def respawn(server_id):
 def checking_health():
     while True:
         # get locks over shared resource 
-        time.sleep(10)
+        time.sleep(3*60)
         with lock1:
             print("aqcuired the lock| health check")
-            __servers = list(servers)
+            __servers= list(servers)
             for server_id in __servers:
                 print(f"checking the health of {server_id}...")
                 if is_dead(server_id):
@@ -185,7 +185,7 @@ def primary_elect(servers):
     conn.close()
 
     
-    return primary_servers
+    
 
 
 @app.post("/get_servers")
@@ -193,12 +193,13 @@ async def handle_servers(servers_list: Dict[str, list]):
     # Assuming servers is your dictionary containing server information
     # Do whatever you need to do with the servers dictionary
     global servers
+    global primary_servers
 
     servers = servers_list
     print(servers)
-    primary_servers = primary_elect(servers)
+    primary_elect(servers)
     
-    return {"message": "Servers received successfully!"}
+    return {"message": "Servers received successfully!","Primary":primary_servers}
 
 
 
