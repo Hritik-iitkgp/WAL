@@ -1,4 +1,4 @@
-# Scalable Database with Sharding and WAL
+# Scalable Database with Sharding
 
 This repository contains the implementation of a distributed database system along with a load balancer using consistent hashing also implementing WAL. The system is designed to efficiently handle read and write operations across multiple shards and server replicas.
 
@@ -53,11 +53,11 @@ The distributed database system manages data entries in a sharded manner across 
   - **Time taken for 10000 write requests:** 843.27 seconds 
   - ****Time taken for 10000 read requests:** 341.817 seconds
  - **Output for A-2**:
-  - **Time taken for 10000 write requests:** 1240.23 seconds 
-  - ****Time taken for 10000 read requests:** 345.29 seconds
+  - **Time taken for 10000 write requests:** 1297.10 seconds 
+  - ****Time taken for 10000 read requests:** 288.11 seconds
 - **Output for A-3**:
-  - **Time taken for 10000 write requests:** 1624.83 seconds 
-  - ****Time taken for 10000 read requests:** 354.93 seconds
+  - **Time taken for 10000 write requests:** 1763.47 seconds 
+  - ****Time taken for 10000 read requests:** 344.39 seconds
 
 ## Setup Instructions
 
@@ -90,9 +90,4 @@ The distributed database system manages data entries in a sharded manner across 
   - **Task A-2: Increase Shard Replicas Performance Analysis:** Burra Nitish
   - **Task A-3: Increase Servers and Shards Performance Analysis:** Burra Nitish
   - **Task A-4: Endpoint Check and Container Dropping:** Chandra Sekhara Azad
- 
-  Assumptions:
-The input json object formats are followed
-Assumed that docker , docker compose and required libreries are installed with the python env being used.
-
 
